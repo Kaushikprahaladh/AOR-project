@@ -1,0 +1,10 @@
+Scenario,Product,Warehouse,Ideal,OnHand,SalesShare
+Normal Demand,SP,KOL,250,345,0.40
+Normal Demand,SP,BLR,400,290,0.45
+Normal Demand,SP,PAT,150,70,0.15
+Normal Demand,RF,KOL,30,12,0.35
+Normal Demand,RF,BLR,25,25,0.45
+Normal Demand,RF,PAT,15,32,0.20
+Normal Demand,GR,KOL,800,1100,0.35
+Normal Demand,GR,BLR,900,1100,0.40
+Normal Demand,GR,PAT,700,480,0.25

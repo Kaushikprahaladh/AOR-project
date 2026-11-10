@@ -1,0 +1,11 @@
+ID,Type,Rules,Input,Expected behavior,Expected numeric result / source status
+T1,Unit,All,All deficits zero,No transfer selected,0 units and ₹0
+T2,Unit,All,KOL SP excess 95; BLR SP deficit 110,Ship within truck window; leave 15 deficit,95 units; 95 load points; 95% fill
+T3,Unit,I1 only,KOL SP excess 40; BLR SP deficit 70,Aggregate source cap binds,40 units moved; 30 unfilled
+T3b,Unit,Full,KOL SP excess 40; BLR SP deficit 70,MOQ/truck lower bound rejects shipment,0 units; infeasible lane remains unused
+T3c,Unit,Full,KOL SP excess 95; BLR SP deficit 110; PAT SP deficit 80,No stock double count across destinations,Combined SP shipments <=95; each lane separately meets its shipment lower bound
+T4,Unit,Budget only,KOL SP excess 100; BLR deficit 100; PAT deficit 100; budget 10000 then 4000,Demonstrate utility versus cost tradeoff,Provided note says BLR 100 at 10000 and BLR 20 + PAT 80 at 4000; validate lane truck rules because 20 SP is below the 70-unit truck minimum
+T5,Unit,Inbound,KOL SP excess 200; BLR SP deficit 150; BLR inbound 60 load points,Inbound limit binds,60 units if truck lower bound is disabled for this isolated test; with full rules, truck minimum may reject shipment
+T6,Unit,MOQ only,One candidate with feasible 60 units and another with 80,MOQ filters first and allows second,0 units / 80 units before truck and other rules
+T7,Unit,Truck fill only,SP candidate 90 units with minimum fill 70%,Then increase minimum to 95%; repeat with 120 available/needed,90 ships at 70%; at 95%,90 is rejected and max single-truck shipment is 95 when enough stock/demand
+T8,Integration,All,Run Normal, Festival, Bengaluru Stockout,Plans respond to scenario gaps,Compare actual exact outputs; supplied Festival/Stockout reference totals conflict with written scenario derivations
