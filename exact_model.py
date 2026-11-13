@@ -85,6 +85,189 @@ def _solve_stage(c, integrality, lower, upper, rows, row_lb, row_ub, options=Non
     )
 
 
+def solve_inventory(
+    inventory: pd.DataFrame,
+    budget: float,
+    out_cap: float,
+    in_cap: float,
+    storage_cap: float,
+    truck_cap: float,
+    min_fill: float,
+    moq: int,
+) -> Tuple[pd.DataFrame, dict, dict]:
+    """Optimize the app's editable inventory using integer shipment decisions.
+
+    Priority is attached to destination demand and unit cost to source stock.
+    Capacity values are measured in units, matching the Streamlit controls.
+    """
+    required = {"Product", "Warehouse", "Excess", "Shortage", "Priority", "Unit cost"}
+    missing = required.difference(inventory.columns)
+    if missing:
+        raise ValueError(f"Inventory is missing columns: {', '.join(sorted(missing))}")
+    if inventory.empty:
+        raise ValueError("Inventory must contain at least one row")
+    if inventory.duplicated(["Product", "Warehouse"]).any():
+        raise ValueError("Each product and warehouse pair must appear only once")
+    if budget < 0 or min(out_cap, in_cap, storage_cap, truck_cap, moq) <= 0:
+        raise ValueError("Budget must be non-negative and limits/MOQ must be positive")
+    if not 0 <= min_fill <= 1:
+        raise ValueError("Minimum truck utilization must be between 0 and 1")
+    numeric = inventory[["Excess", "Shortage", "Priority", "Unit cost"]].to_numpy(dtype=float)
+    if not np.isfinite(numeric).all() or (numeric < 0).any():
+        raise ValueError("Inventory quantities, priorities, and costs must be finite and non-negative")
+
+    products = tuple(inventory["Product"].drop_duplicates())
+    warehouses = tuple(inventory["Warehouse"].drop_duplicates())
+    stock = {(r.Product, r.Warehouse): float(r.Excess) for r in inventory.itertuples()}
+    need = {(r.Product, r.Warehouse): float(r.Shortage) for r in inventory.itertuples()}
+    priority = {(r.Product, r.Warehouse): float(r.Priority) for r in inventory.itertuples()}
+    unit_cost = {(row["Product"], row["Warehouse"]): float(row["Unit cost"]) for _, row in inventory.iterrows()}
+    if len(warehouses) < 2:
+        remaining = dict(need)
+        reasons = {
+            key: ["No other warehouse is available for transfers"]
+            for key, quantity in remaining.items() if quantity > 0
+        }
+        columns = ["Product", "From", "To", "Units", "Unit cost (₹)", "Transfer cost (₹)", "Priority", "Truck fill"]
+        return pd.DataFrame(columns=columns), remaining, reasons
+    lanes = [
+        (product, source, destination)
+        for product in products
+        for source in warehouses
+        for destination in warehouses
+        if source != destination
+    ]
+    lane_count = len(lanes)
+    minimum_shipment = max(moq, int(np.ceil(truck_cap * min_fill - 1e-10)))
+    lower = [0.0] * (2 * lane_count)
+    upper = [0.0] * lane_count + [1.0] * lane_count
+    integrality = [1] * (2 * lane_count)
+    costs = []
+    utilities = []
+    for lane_index, (product, source, destination) in enumerate(lanes):
+        available = min(stock.get((product, source), 0.0), need.get((product, destination), 0.0))
+        upper[lane_index] = available
+        costs.append(unit_cost.get((product, source), 0.0))
+        utilities.append(priority.get((product, destination), 0.0))
+        if available < minimum_shipment:
+            upper[lane_count + lane_index] = 0.0
+
+    rows: List[Dict[int, float]] = []
+    row_lbs: List[float] = []
+    row_ubs: List[float] = []
+
+    def add(coefficients, lower_bound=-np.inf, upper_bound=np.inf):
+        rows.append(coefficients)
+        row_lbs.append(lower_bound)
+        row_ubs.append(upper_bound)
+
+    for product in products:
+        for source in warehouses:
+            add({i: 1.0 for i, (p, s, _) in enumerate(lanes) if p == product and s == source}, upper_bound=stock.get((product, source), 0.0))
+        for destination in warehouses:
+            add({i: 1.0 for i, (p, _, d) in enumerate(lanes) if p == product and d == destination}, upper_bound=need.get((product, destination), 0.0))
+    for warehouse in warehouses:
+        add({i: 1.0 for i, (_, source, _) in enumerate(lanes) if source == warehouse}, upper_bound=out_cap)
+        add({i: 1.0 for i, (_, _, destination) in enumerate(lanes) if destination == warehouse}, upper_bound=in_cap)
+        add({i: 1.0 for i, (_, _, destination) in enumerate(lanes) if destination == warehouse}, upper_bound=storage_cap)
+    for i, (product, source, destination) in enumerate(lanes):
+        add({i: 1.0, lane_count + i: -float(truck_cap)}, upper_bound=0.0)
+        add({i: -1.0, lane_count + i: float(minimum_shipment)}, upper_bound=0.0)
+    add({i: costs[i] for i in range(lane_count)}, upper_bound=budget)
+
+    objective = [0.0] * (2 * lane_count)
+    for i in range(lane_count):
+        objective[i] = -utilities[i]
+    first = _solve_stage(objective, integrality, lower, upper, rows, row_lbs, row_ubs)
+    if not first.success:
+        raise RuntimeError(f"Exact inventory optimization failed: {first.message}")
+
+    best_utility = float(sum(utilities[i] * first.x[i] for i in range(lane_count)))
+    second_rows = rows + [{i: utilities[i] for i in range(lane_count)}]
+    second_lbs = row_lbs + [best_utility - 1e-7]
+    second_ubs = row_ubs + [best_utility + 1e-7]
+    cost_objective = costs + [0.0] * lane_count
+    second = _solve_stage(cost_objective, integrality, lower, upper, second_rows, second_lbs, second_ubs)
+    chosen = second if second.success else first
+
+    plan_rows = []
+    moved = {lane: int(round(chosen.x[i])) for i, lane in enumerate(lanes)}
+    for i, (product, source, destination) in enumerate(lanes):
+        quantity = moved[(product, source, destination)]
+        if quantity <= 0:
+            continue
+        cost = costs[i]
+        plan_rows.append({
+            "Product": product,
+            "From": source,
+            "To": destination,
+            "Units": quantity,
+            "Unit cost (₹)": cost,
+            "Transfer cost (₹)": quantity * cost,
+            "Priority": utilities[i],
+            "Truck fill": quantity / truck_cap,
+        })
+    plan = pd.DataFrame(plan_rows, columns=[
+        "Product", "From", "To", "Units", "Unit cost (₹)",
+        "Transfer cost (₹)", "Priority", "Truck fill",
+    ])
+
+    remaining = dict(need)
+    remaining_stock = dict(stock)
+    remaining_out = {warehouse: float(out_cap) for warehouse in warehouses}
+    remaining_in = {warehouse: float(in_cap) for warehouse in warehouses}
+    remaining_storage = {warehouse: float(storage_cap) for warehouse in warehouses}
+    remaining_budget = float(budget)
+    for i, (product, source, destination) in enumerate(lanes):
+        quantity = moved[(product, source, destination)]
+        cost = costs[i]
+        remaining[(product, destination)] = remaining.get((product, destination), 0.0) - quantity
+        remaining_stock[(product, source)] = remaining_stock.get((product, source), 0.0) - quantity
+        remaining_out[source] -= quantity
+        remaining_in[destination] -= quantity
+        remaining_storage[destination] -= quantity
+        remaining_budget -= quantity * cost
+    remaining = {key: max(0.0, value) for key, value in remaining.items()}
+
+    unmet_reasons = {}
+    for (product, destination), remaining_need in remaining.items():
+        if remaining_need <= 0:
+            continue
+        sources = [
+            source for source in warehouses
+            if source != destination and remaining_stock.get((product, source), 0) > 0
+        ]
+        reasons = set()
+        if not sources:
+            reasons.add("No excess stock remains at other warehouses")
+        else:
+            if remaining_need < minimum_shipment:
+                reasons.add(
+                    f"Remaining demand is {int(remaining_need)} units; "
+                    f"minimum shipment size is {minimum_shipment}"
+                )
+            for source in sources:
+                cost = unit_cost[(product, source)]
+                limits = [
+                    (remaining_stock[(product, source)], f"Stock at {source}"),
+                    (remaining_out[source], f"Outbound capacity at {source}"),
+                    (remaining_in[destination], f"Inbound capacity at {destination}"),
+                    (remaining_storage[destination], f"Storage at {destination}"),
+                    (remaining_budget / max(cost, 1), "Remaining budget at this lane cost"),
+                    (truck_cap, "Truck capacity"),
+                ]
+                reasons.update(
+                    f"{label}: {int(available)} units available; {minimum_shipment} needed"
+                    for available, label in limits
+                    if available < minimum_shipment
+                )
+            if not reasons:
+                reasons.add("Available resources were allocated to higher-priority feasible shipments")
+        unmet_reasons[(product, destination)] = sorted(reasons)
+
+    return plan, remaining, unmet_reasons
+
+
 def solve(name: str, budget: float = BUDGET) -> Tuple[pd.DataFrame, dict]:
     """Maximize priority-weighted fulfilled units, then minimize cost at that score.
 

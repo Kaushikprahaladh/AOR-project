@@ -1,8 +1,11 @@
 import unittest
 
+import pandas as pd
+
 from exact_model import (
     BUDGET, INBOUND, MOQ, OUTBOUND, PRODUCTS, STORAGE, TRUCK_MAX_LOAD,
     TRUCK_MIN_LOAD, WAREHOUSES, LOAD, lane_cost, scenario_table, solve,
+    solve_inventory,
 )
 
 
@@ -58,6 +61,32 @@ class ExactModelTests(unittest.TestCase):
         self.assertEqual(lane_cost("SP", "KOL", "BLR"), 80)
         self.assertEqual(lane_cost("RF", "KOL", "BLR"), 800)
         self.assertEqual(lane_cost("GR", "KOL", "PAT"), 15)
+
+    def test_editable_inventory_uses_exact_constraints_and_reports_unmet_need(self):
+        inventory = pd.DataFrame([
+            {"Product": "Widget", "Warehouse": "Origin", "Excess": 80, "Shortage": 0, "Priority": 1, "Unit cost": 1},
+            {"Product": "Widget", "Warehouse": "Destination", "Excess": 0, "Shortage": 100, "Priority": 5, "Unit cost": 1},
+            {"Product": "Gizmo", "Warehouse": "Third", "Excess": 0, "Shortage": 0, "Priority": 1, "Unit cost": 1},
+        ])
+        plan, remaining, reasons = solve_inventory(
+            inventory, budget=80, out_cap=100, in_cap=100,
+            storage_cap=100, truck_cap=100, min_fill=0.5, moq=10,
+        )
+        self.assertEqual(int(plan["Units"].sum()), 80)
+        self.assertEqual(remaining[("Widget", "Destination")], 20)
+        self.assertIn("No excess stock remains at other warehouses", reasons[("Widget", "Destination")])
+
+    def test_editable_inventory_without_multiple_warehouses_returns_no_plan(self):
+        inventory = pd.DataFrame([
+            {"Product": "Widget", "Warehouse": "Origin", "Excess": 0, "Shortage": 20, "Priority": 5, "Unit cost": 1},
+        ])
+        plan, remaining, reasons = solve_inventory(
+            inventory, budget=80, out_cap=100, in_cap=100,
+            storage_cap=100, truck_cap=100, min_fill=0.5, moq=10,
+        )
+        self.assertTrue(plan.empty)
+        self.assertEqual(remaining[("Widget", "Origin")], 20)
+        self.assertEqual(reasons[("Widget", "Origin")], ["No other warehouse is available for transfers"])
 
 
 if __name__ == "__main__":

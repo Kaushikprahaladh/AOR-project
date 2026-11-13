@@ -1,6 +1,9 @@
+from html import escape as escape_html
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from exact_model import solve_inventory
 
 
 st.set_page_config(page_title="StockBridge | Transfer Planner", page_icon="📦", layout="wide")
@@ -50,53 +53,25 @@ SCENARIOS = {
 WAREHOUSES = ["Kolkata", "Bengaluru", "Patna"]
 
 
-def recommend_transfers(inventory, budget, out_cap, in_cap, storage_cap, truck_cap, min_fill, moq):
-    """Transparent greedy approximation for a classroom decision-support demo."""
-    stock = {(r.Product, r.Warehouse): float(r.Excess) for r in inventory.itertuples()}
-    need = {(r.Product, r.Warehouse): float(r.Shortage) for r in inventory.itertuples()}
-    priority = {(r.Product, r.Warehouse): float(r.Priority) for r in inventory.itertuples()}
-    unit_cost = {(r["Product"], r["Warehouse"]): float(r["Unit cost"]) for _, r in inventory.iterrows()}
-    outbound = {w: float(out_cap) for w in WAREHOUSES}
-    inbound = {w: float(in_cap) for w in WAREHOUSES}
-    storage = {w: float(storage_cap) for w in WAREHOUSES}
-    remaining_budget = float(budget)
-    candidates = []
-    products = inventory["Product"].unique()
-    for product in products:
-        sources = [w for w in WAREHOUSES if stock.get((product, w), 0) > 0]
-        destinations = [w for w in WAREHOUSES if need.get((product, w), 0) > 0]
-        for source in sources:
-            for dest in destinations:
-                if source == dest:
-                    continue
-                cost = unit_cost[(product, source)]
-                benefit = priority[(product, dest)]
-                candidates.append((benefit / max(cost, 1), benefit, product, source, dest, cost))
-    candidates.sort(reverse=True)
-
-    plan = []
-    for ratio, benefit, product, source, dest, cost in candidates:
-        possible = min(stock.get((product, source), 0), need.get((product, dest), 0), outbound[source], inbound[dest], storage[dest], remaining_budget / max(cost, 1))
-        qty = int(possible)
-        # This simplified prototype uses one truck per lane/product shipment.
-        qty = min(qty, int(truck_cap))
-        if qty < int(moq) or qty < int(truck_cap * min_fill):
-            continue
-        expense = qty * cost
-        plan.append({"Product": product, "From": source, "To": dest, "Units": qty, "Unit cost (₹)": cost, "Transfer cost (₹)": expense, "Priority": benefit, "Truck fill": qty / truck_cap})
-        stock[(product, source)] -= qty
-        need[(product, dest)] -= qty
-        outbound[source] -= qty
-        inbound[dest] -= qty
-        storage[dest] -= qty
-        remaining_budget -= expense
-
-    return pd.DataFrame(plan), need
-
-
-st.markdown("<style>\n.stApp{background:#f6f7f5}.block-container{padding-top:2rem;max-width:1320px}.hero{padding:1.5rem 1.8rem;border-radius:18px;background:linear-gradient(120deg,#143c35,#236b5c);color:#fff;margin-bottom:1.2rem}.hero h1{color:#fff;margin:0;font-size:2.2rem}.hero p{color:#d8ebe4;margin:.4rem 0 0}.smallnote{color:#64716d;font-size:.88rem}\n</style>", unsafe_allow_html=True)
+st.markdown("<style>\n.stApp{background:#f6f7f5}.block-container{padding-top:2rem;max-width:1320px}.hero{padding:1.5rem 1.8rem;border-radius:18px;background:linear-gradient(120deg,#143c35,#236b5c);color:#fff;margin-bottom:1.2rem}.hero h1{color:#fff;margin:0;font-size:2.2rem}.hero p{color:#d8ebe4;margin:.4rem 0 0}.smallnote{color:#64716d;font-size:.88rem}.result-table-wrap{overflow-x:auto}.result-table{width:100%;border-collapse:collapse}.result-table th,.result-table td{padding:.65rem .75rem;text-align:left;border-bottom:1px solid #d8dfdb;white-space:nowrap}.result-table th{color:#27483f;background:#eaf0ed}.result-table tbody tr:nth-child(even){background:#f1f5f2}@media(max-width:700px){.block-container{padding:1rem .85rem}.hero{padding:1.2rem}.result-table th,.result-table td{padding:.55rem}}\n</style>", unsafe_allow_html=True)
+st.markdown("""
+<style>
+.position-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px;margin:.4rem 0 1.2rem}
+.position-card{background:#fff;border:1px solid #d8dfdb;border-radius:6px;padding:14px 16px;min-width:0}
+.position-card h3{font-size:1rem;margin:0 0 8px;color:#23483d}
+.position-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #edf0ee}
+.position-product{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.position-values{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:5px}
+.position-tag{font-size:.78rem;padding:3px 6px;border-radius:3px;white-space:nowrap}
+.position-surplus{background:#e6f4ea;color:#17643b}
+.position-shortage{background:#fff1dc;color:#8a4b08}
+.position-balanced{background:#eef1ef;color:#53615b}
+@media(max-width:520px){.position-card{padding:12px}.position-row{align-items:flex-start;flex-direction:column}.position-values{justify-content:flex-start}}
+@media(max-width:700px){[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important;gap:.5rem!important}[data-testid="stHorizontalBlock"]>[data-testid="column"]{flex:1 1 calc(50% - .5rem)!important;width:calc(50% - .5rem)!important;min-width:calc(50% - .5rem)!important}}
+</style>
+""", unsafe_allow_html=True)
 st.markdown('<div class="hero"><h1>StockBridge</h1><p>Inventory transfer planner · A Flipkart-inspired classroom prototype</p></div>', unsafe_allow_html=True)
-st.caption("Illustrative data only. This prototype demonstrates a simplified greedy heuristic; it is not Flipkart software or a production optimizer.")
+st.caption("Illustrative data only. This prototype uses an exact integer optimization model; it is not Flipkart software or a production optimizer.")
 
 with st.sidebar:
     st.subheader("Planning scenario")
@@ -104,35 +79,105 @@ with st.sidebar:
     scenario = SCENARIOS[scenario_name]
     budget = st.number_input("Transfer budget (₹)", min_value=0, value=int(scenario["budget"]), step=10_000)
     st.divider()
-    st.subheader("Operating limits")
-    out_cap = st.number_input("Outbound limit per warehouse (units)", min_value=1, value=160)
-    in_cap = st.number_input("Inbound limit per warehouse (units)", min_value=1, value=140)
-    storage_cap = st.number_input("Available storage per destination (units)", min_value=1, value=160)
-    truck_cap = st.number_input("Truck capacity (units)", min_value=1, value=100)
-    min_fill_pct = st.slider("Minimum truck utilization", min_value=0, max_value=100, value=70, step=5)
-    moq = st.number_input("Minimum order quantity (units)", min_value=1, value=10)
+    with st.expander("Operating limits", expanded=False):
+        out_cap = st.number_input("Outbound limit per warehouse (units)", min_value=1, value=160)
+        in_cap = st.number_input("Inbound limit per warehouse (units)", min_value=1, value=140)
+        storage_cap = st.number_input("Available storage per destination (units)", min_value=1, value=160)
+        truck_cap = st.number_input("Truck capacity (units)", min_value=1, value=100)
+        min_fill_pct = st.slider("Minimum truck utilization", min_value=0, max_value=100, value=70, step=5)
+        moq = st.number_input("Minimum order quantity (units)", min_value=1, value=10)
 
 st.subheader("Inventory position")
 default_df = pd.DataFrame(scenario["inventory"])
-edited = st.data_editor(default_df, use_container_width=True, hide_index=True, num_rows="fixed", column_config={
-    "Warehouse": st.column_config.SelectboxColumn(options=WAREHOUSES),
-    "Excess": st.column_config.NumberColumn(min_value=0, step=1),
-    "Shortage": st.column_config.NumberColumn(min_value=0, step=1),
-    "Priority": st.column_config.NumberColumn(min_value=1, max_value=5, step=1),
-    "Unit cost": st.column_config.NumberColumn(min_value=0, step=10, format="₹%.0f"),
-})
+edited_rows = []
+for product in default_df["Product"].unique():
+    product_rows = default_df[default_df["Product"] == product]
+    with st.expander(f"{product} · {len(product_rows)} warehouses", expanded=True):
+        for row_index, row in product_rows.iterrows():
+            with st.container(border=True):
+                st.markdown(f"**{row['Warehouse']}**")
+                columns = st.columns([1.2, 1, 1, 0.9, 1.2])
+                warehouse = columns[0].selectbox(
+                    "Warehouse",
+                    WAREHOUSES,
+                    index=WAREHOUSES.index(row["Warehouse"]),
+                    key=f"inventory_{scenario_name}_{row_index}_warehouse",
+                )
+                excess = columns[1].number_input(
+                    "Excess", min_value=0, value=int(row["Excess"]), step=1,
+                    key=f"inventory_{scenario_name}_{row_index}_excess",
+                )
+                shortage = columns[2].number_input(
+                    "Shortage", min_value=0, value=int(row["Shortage"]), step=1,
+                    key=f"inventory_{scenario_name}_{row_index}_shortage",
+                )
+                priority = columns[3].number_input(
+                    "Priority", min_value=1, max_value=5, value=int(row["Priority"]), step=1,
+                    key=f"inventory_{scenario_name}_{row_index}_priority",
+                )
+                unit_cost = columns[4].number_input(
+                    "Unit cost (₹)", min_value=0, value=int(row["Unit cost"]), step=10,
+                    key=f"inventory_{scenario_name}_{row_index}_unit_cost",
+                )
+                edited_rows.append({
+                    "Product": row["Product"],
+                    "Warehouse": warehouse,
+                    "Excess": excess,
+                    "Shortage": shortage,
+                    "Priority": priority,
+                    "Unit cost": unit_cost,
+                })
+edited = pd.DataFrame(edited_rows, columns=default_df.columns)
 
-run = st.button("Generate transfer plan", type="primary", use_container_width=True)
+st.subheader("Network position")
+total_excess = int(edited["Excess"].sum())
+total_shortage = int(edited["Shortage"].sum())
+transferable_products = set()
+for product, product_rows in edited.groupby("Product"):
+    sources = product_rows[product_rows["Excess"] > 0]
+    destinations = product_rows[product_rows["Shortage"] > 0]
+    if any(source.Warehouse != destination.Warehouse for source in sources.itertuples() for destination in destinations.itertuples()):
+        transferable_products.add(product)
+position_metrics = st.columns(3)
+position_metrics[0].metric("Excess inventory", f"{total_excess:,} units")
+position_metrics[1].metric("Shortage demand", f"{total_shortage:,} units")
+position_metrics[2].metric("Products with a cross-center match", f"{len(transferable_products)} / {edited['Product'].nunique()}")
+
+position_cards = ['<div class="position-cards">']
+for warehouse in WAREHOUSES:
+    warehouse_rows = edited[edited["Warehouse"] == warehouse]
+    position_cards.append(f'<section class="position-card"><h3>{escape_html(warehouse)}</h3>')
+    for row in warehouse_rows.itertuples(index=False):
+        tags = []
+        if row.Excess:
+            tags.append(f'<span class="position-tag position-surplus">{int(row.Excess):,} surplus</span>')
+        if row.Shortage:
+            tags.append(f'<span class="position-tag position-shortage">{int(row.Shortage):,} shortage</span>')
+        if not tags:
+            tags.append('<span class="position-tag position-balanced">Balanced</span>')
+        position_cards.append(
+            f'<div class="position-row"><span class="position-product">{escape_html(str(row.Product))}</span>'
+            f'<span class="position-values">{"".join(tags)}</span></div>'
+        )
+    position_cards.append('</section>')
+position_cards.append('</div>')
+st.markdown("".join(position_cards), unsafe_allow_html=True)
+
+run = st.button("Generate transfer plan", type="primary", width="stretch")
 if "plan" not in st.session_state:
     st.session_state.plan = pd.DataFrame()
     st.session_state.remaining = {}
+if "unmet_reasons" not in st.session_state:
+    st.session_state.unmet_reasons = {}
 if run:
-    if (edited[["Excess", "Shortage", "Priority", "Unit cost"]] < 0).any().any():
+    if edited.duplicated(["Product", "Warehouse"]).any():
+        st.error("Each product can appear only once at each warehouse. Check the warehouse selections above.")
+    elif (edited[["Excess", "Shortage", "Priority", "Unit cost"]] < 0).any().any():
         st.error("Inventory, costs, and priorities must be non-negative.")
     elif (edited["Priority"] > 5).any() or (edited["Priority"] < 1).any():
         st.error("Priority must be between 1 and 5.")
     else:
-        st.session_state.plan, st.session_state.remaining = recommend_transfers(edited, budget, out_cap, in_cap, storage_cap, truck_cap, min_fill_pct / 100, moq)
+        st.session_state.plan, st.session_state.remaining, st.session_state.unmet_reasons = solve_inventory(edited, budget, out_cap, in_cap, storage_cap, truck_cap, min_fill_pct / 100, moq)
 
 st.divider()
 st.subheader("Recommended transfers")
@@ -150,17 +195,40 @@ else:
     c4.metric("Shortage units filled", f"{max(0, int(filled)):,}")
     display = plan.copy()
     display["Truck fill"] = (display["Truck fill"] * 100).round(0).astype(int).astype(str) + "%"
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.markdown(
+        f'<div class="result-table-wrap">{display.to_html(index=False, escape=True, border=0, classes="result-table")}</div>',
+        unsafe_allow_html=True,
+    )
     before_after = []
     for r in edited.itertuples():
         before = float(r.Shortage)
         after = st.session_state.remaining.get((r.Product, r.Warehouse), before)
         before_after.extend([{"Product / centre": f"{r.Product} · {r.Warehouse}", "Measure": "Before", "Units": before}, {"Product / centre": f"{r.Product} · {r.Warehouse}", "Measure": "Remaining", "Units": after}])
-    chart = px.bar(pd.DataFrame(before_after), x="Product / centre", y="Units", color="Measure", barmode="group", color_discrete_map={"Before": "#c8d4cf", "Remaining": "#237762"}, title="Shortages before and after the recommended transfers")
-    chart.update_layout(legend_title_text="", xaxis_title="", yaxis_title="Units")
-    st.plotly_chart(chart, use_container_width=True)
+    chart = px.bar(pd.DataFrame(before_after), x="Units", y="Product / centre", color="Measure", barmode="group", orientation="h", color_discrete_map={"Before": "#a9b8b1", "Remaining": "#237762"}, title="Shortages before and after the recommended transfers")
+    chart.update_layout(legend_title_text="", xaxis_title="Units", yaxis_title="", height=max(340, len(before_after) * 32), yaxis={"categoryorder": "total ascending"}, margin={"l": 10, "r": 20, "t": 60, "b": 20})
+    st.plotly_chart(chart, width="stretch")
     st.download_button("Download transfer plan (CSV)", plan.to_csv(index=False).encode("utf-8"), file_name="stockbridge_transfer_plan.csv", mime="text/csv")
-    st.markdown('<p class="smallnote">Method note: candidates are ranked by destination priority divided by lane unit cost. Quantities are then capped by available stock, shortage, capacity, storage, budget, MOQ, and the simplified one-truck-per-shipment utilization rule. This is an illustrative heuristic, not a solver-generated optimum.</p>', unsafe_allow_html=True)
+    with st.expander("About this plan", expanded=False):
+        st.markdown("The model first maximizes priority-weighted units fulfilled, then minimizes transfer cost among plans with the best fulfillment score. It enforces stock, shortage, per-warehouse outbound and inbound limits, storage, budget, minimum order quantity, truck capacity, and minimum truck utilization. This is an illustrative optimization model, not a production optimizer.")
+
+unfilled_rows = []
+for row in edited.itertuples():
+    remaining_units = st.session_state.remaining.get((row.Product, row.Warehouse), 0)
+    if remaining_units > 0:
+        reasons = st.session_state.unmet_reasons.get((row.Product, row.Warehouse), [])
+        unfilled_rows.append({
+            "Product": row.Product,
+            "Warehouse": row.Warehouse,
+            "Unfilled units": int(remaining_units),
+            "Why it remains": "; ".join(reasons),
+        })
+if unfilled_rows:
+    st.markdown("**Unfilled demand**")
+    unfilled_table = pd.DataFrame(unfilled_rows)
+    st.markdown(
+        f'<div class="result-table-wrap">{unfilled_table.to_html(index=False, escape=True, border=0, classes="result-table")}</div>',
+        unsafe_allow_html=True,
+    )
 
 st.divider()
 with st.expander("How to present this prototype"):
