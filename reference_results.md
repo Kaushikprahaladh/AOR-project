@@ -12,7 +12,26 @@ Each selected shipment satisfies the one-truck load window and MOQ. Aggregate so
 
 ## Verification status
 
-`python -m unittest -v test_exact_model.py` passes all five tests. The automated suite checks input arithmetic, lane costs, and integrated-plan invariants for all three scenarios. T1–T7 in `test_scenarios.csv` are a broader proposed validation matrix; most isolated-rule cases still need dedicated configurable model tests before they can be called automated test results.
+Run the repeatable matrix with `python run_test_matrix.py`. It exercises the app-facing `solve_inventory` function for the isolated cases and the reference `solve` function for T8. Results recorded on 2026-11-13:
+
+| Case | Result | Observed output |
+|---|---|---|
+| T1 | PASS | Zero deficits produced 0 units and no plan rows. |
+| T2 | PASS | 95 units shipped, 95 load points, 95% truck fill; 15 units remain at BLR. |
+| T3, I1 only | PASS | 40 units moved from 40 available; 30 of 70 demand remains. MOQ and truck lower bounds were disabled for this isolated source-cap case. |
+| T3b, full rules | PASS | 0 shipped from 40 available against 70 demand; the lane is rejected by the 75-unit MOQ. |
+| T3c, shared source stock | PASS | 95 combined SP units shipped on one lane; no source stock is double-counted and every active lane meets its minimum. |
+| T4, budget reference | FAIL, expected result inconsistent | At ₹10,000 budget, 100 BLR units cost ₹10,000. At ₹4,000, the model ships 40 BLR units for ₹4,000. The note's stated 20 BLR + 80 PAT plan costs ₹10,000 at the configured ₹100/unit and also includes a 20-unit lane below the documented 70-unit truck minimum. The expected values need correction or different lane costs/rules. |
+| T5, inbound only | PASS | 60 units shipped under the 60-unit inbound cap; shipment lower bounds were disabled for isolation. |
+| T6, MOQ | PASS | The 60-unit candidate was rejected; the 80-unit candidate shipped. Truck minimum was disabled to isolate MOQ. |
+| T7, truck fill | PASS | 90 units shipped at a 70% minimum; rejected at a 95% minimum. With 120 available and needed, the 95% maximum allowed 95 units. |
+| T8, Normal Demand | PASS | 285 units; ₹10,450 cost; weighted utility 8,804.4643; deficit 428 initially and 143 remaining. Plan: SP KOL→BLR 95, GR KOL→PAT 190. |
+| T8, Festival Sale | PASS | 198 units; ₹11,900 cost; weighted utility 7,280.9341; deficit 692 initially and 494 remaining. Plan: RF PAT→KOL 8, GR BLR→PAT 190. |
+| T8, Bengaluru Stockout | PASS | 270 units; ₹10,000 cost; weighted utility 12,866.6667; deficit 1,279 initially and 1,009 remaining. Plan: SP KOL→PAT 80, GR KOL→BLR 190. |
+
+Matrix total: 9 PASS, 1 FAIL across 10 runner cases; T8 is one runner case covering three scenarios. The T4 failure is an inconsistency in the supplied expected result, not a solver constraint violation. The runner prints the full observed T8 plans and values.
+
+`python -m unittest -v test_exact_model.py` passes all seven automated tests. A Streamlit `AppTest` run also generated the default editable-inventory plan without exceptions: 95 units transferred, ₹19,950 estimated spend, and 95 shortage units filled.
 
 ## Arithmetic audit
 

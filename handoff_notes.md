@@ -56,9 +56,9 @@ The Normal case totals 428 deficit and 612 excess units; the note's 428 deficit 
 2. Add utility maximization and budget. Record utility and spend.
 3. Add outbound limits, then inbound limits, then pooled storage. Record changes after each addition.
 4. Add activation binaries, MOQ, and one-truck minimum/maximum fill. Record rejected small shipments.
-5. Add the cost tie-break and compare the exact output with the Streamlit heuristic.
+5. Add the cost tie-break and compare the exact output with the Streamlit planner. The app now calls the app-facing exact inventory solver; it no longer uses a separate greedy heuristic.
 
-The current `exact_model.py` implements the final set of constraints and the two-stage objective. The iteration waterfall in the supplied note is a proposed reference; re-run each iteration in a separately versioned model before citing it as reproduced evidence.
+The current `exact_model.py` implements the reference model and an app-facing inventory solver with the same two-stage objective. The iteration waterfall in the supplied note is a proposed reference; re-run each iteration in a separately versioned model before citing it as reproduced evidence. Run `python run_test_matrix.py` for the T1–T8 validation matrix; see `reference_results.md` for captured outputs and the unresolved T4 expected-result mismatch.
 
 ## What to ask the team to fine-tune
 

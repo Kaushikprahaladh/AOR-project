@@ -94,6 +94,7 @@ def solve_inventory(
     truck_cap: float,
     min_fill: float,
     moq: int,
+    truck_max_fill: float = TRUCK_MAX_LOAD / 100,
 ) -> Tuple[pd.DataFrame, dict, dict]:
     """Optimize the app's editable inventory using integer shipment decisions.
 
@@ -110,8 +111,10 @@ def solve_inventory(
         raise ValueError("Each product and warehouse pair must appear only once")
     if budget < 0 or min(out_cap, in_cap, storage_cap, truck_cap, moq) <= 0:
         raise ValueError("Budget must be non-negative and limits/MOQ must be positive")
-    if not 0 <= min_fill <= 1:
-        raise ValueError("Minimum truck utilization must be between 0 and 1")
+    if not 0 <= min_fill <= 1 or not 0 < truck_max_fill <= 1:
+        raise ValueError("Truck utilization must satisfy 0 <= minimum <= 1 and 0 < maximum <= 1")
+    if min_fill > truck_max_fill:
+        raise ValueError("Minimum truck utilization cannot exceed maximum truck utilization")
     numeric = inventory[["Excess", "Shortage", "Priority", "Unit cost"]].to_numpy(dtype=float)
     if not np.isfinite(numeric).all() or (numeric < 0).any():
         raise ValueError("Inventory quantities, priorities, and costs must be finite and non-negative")
@@ -171,7 +174,7 @@ def solve_inventory(
         add({i: 1.0 for i, (_, _, destination) in enumerate(lanes) if destination == warehouse}, upper_bound=in_cap)
         add({i: 1.0 for i, (_, _, destination) in enumerate(lanes) if destination == warehouse}, upper_bound=storage_cap)
     for i, (product, source, destination) in enumerate(lanes):
-        add({i: 1.0, lane_count + i: -float(truck_cap)}, upper_bound=0.0)
+        add({i: 1.0, lane_count + i: -float(truck_cap * truck_max_fill)}, upper_bound=0.0)
         add({i: -1.0, lane_count + i: float(minimum_shipment)}, upper_bound=0.0)
     add({i: costs[i] for i in range(lane_count)}, upper_bound=budget)
 

@@ -29,6 +29,14 @@ Run one scenario:
 python exact_model.py --scenario "Normal Demand"
 ```
 
+Run the T1–T8 validation matrix and print observed outputs:
+
+```bash
+python run_test_matrix.py
+```
+
+The recorded run and the T4 expected-result discrepancy are documented in `reference_results.md`.
+
 Export each plan and summary to CSV:
 
 ```bash
