@@ -18,6 +18,52 @@ STRESS_SCENARIO = {
     ],
 }
 STRESS_NAME = "Capacity Squeeze (stress test)"
+SCENARIOS = {
+    "Festival Sale": {
+        "budget": 180_000, "out_cap": 160, "in_cap": 140, "storage_cap": 160,
+        "inventory": [
+            {"Product": "Smartphones", "Warehouse": "Kolkata", "Excess": 120, "Shortage": 0, "Priority": 5, "Unit cost": 210},
+            {"Product": "Smartphones", "Warehouse": "Bengaluru", "Excess": 0, "Shortage": 95, "Priority": 5, "Unit cost": 210},
+            {"Product": "Smartphones", "Warehouse": "Patna", "Excess": 0, "Shortage": 20, "Priority": 4, "Unit cost": 260},
+            {"Product": "Refrigerators", "Warehouse": "Kolkata", "Excess": 0, "Shortage": 30, "Priority": 3, "Unit cost": 900},
+            {"Product": "Refrigerators", "Warehouse": "Bengaluru", "Excess": 45, "Shortage": 0, "Priority": 3, "Unit cost": 900},
+            {"Product": "Grocery packs", "Warehouse": "Kolkata", "Excess": 0, "Shortage": 25, "Priority": 4, "Unit cost": 60},
+            {"Product": "Grocery packs", "Warehouse": "Bengaluru", "Excess": 0, "Shortage": 15, "Priority": 3, "Unit cost": 80},
+            {"Product": "Grocery packs", "Warehouse": "Patna", "Excess": 70, "Shortage": 0, "Priority": 4, "Unit cost": 60},
+        ],
+    },
+    "Bengaluru Stockout": {
+        "budget": 140_000, "out_cap": 160, "in_cap": 140, "storage_cap": 160,
+        "inventory": [
+            {"Product": "Smartphones", "Warehouse": "Kolkata", "Excess": 110, "Shortage": 0, "Priority": 5, "Unit cost": 210},
+            {"Product": "Smartphones", "Warehouse": "Bengaluru", "Excess": 0, "Shortage": 105, "Priority": 5, "Unit cost": 210},
+            {"Product": "Smartphones", "Warehouse": "Patna", "Excess": 15, "Shortage": 0, "Priority": 2, "Unit cost": 210},
+            {"Product": "Refrigerators", "Warehouse": "Kolkata", "Excess": 35, "Shortage": 0, "Priority": 3, "Unit cost": 850},
+            {"Product": "Refrigerators", "Warehouse": "Bengaluru", "Excess": 0, "Shortage": 28, "Priority": 4, "Unit cost": 850},
+            {"Product": "Grocery packs", "Warehouse": "Kolkata", "Excess": 0, "Shortage": 0, "Priority": 2, "Unit cost": 60},
+            {"Product": "Grocery packs", "Warehouse": "Bengaluru", "Excess": 0, "Shortage": 0, "Priority": 2, "Unit cost": 60},
+            {"Product": "Grocery packs", "Warehouse": "Patna", "Excess": 40, "Shortage": 0, "Priority": 2, "Unit cost": 60},
+        ],
+    },
+    "Normal Demand": {
+        "budget": 100_000, "out_cap": 160, "in_cap": 140, "storage_cap": 160,
+        "inventory": [
+            {"Product": "Smartphones", "Warehouse": "Kolkata", "Excess": 35, "Shortage": 0, "Priority": 4, "Unit cost": 180},
+            {"Product": "Smartphones", "Warehouse": "Bengaluru", "Excess": 0, "Shortage": 20, "Priority": 3, "Unit cost": 180},
+            {"Product": "Smartphones", "Warehouse": "Patna", "Excess": 0, "Shortage": 5, "Priority": 2, "Unit cost": 230},
+            {"Product": "Refrigerators", "Warehouse": "Kolkata", "Excess": 0, "Shortage": 8, "Priority": 2, "Unit cost": 750},
+            {"Product": "Refrigerators", "Warehouse": "Bengaluru", "Excess": 14, "Shortage": 0, "Priority": 3, "Unit cost": 750},
+            {"Product": "Grocery packs", "Warehouse": "Kolkata", "Excess": 0, "Shortage": 0, "Priority": 2, "Unit cost": 50},
+            {"Product": "Grocery packs", "Warehouse": "Bengaluru", "Excess": 10, "Shortage": 0, "Priority": 2, "Unit cost": 50},
+            {"Product": "Grocery packs", "Warehouse": "Patna", "Excess": 0, "Shortage": 0, "Priority": 2, "Unit cost": 65},
+        ],
+    },
+    STRESS_NAME: {
+        "budget": STRESS_SCENARIO["budget"], "out_cap": 145,
+        "in_cap": 250, "storage_cap": 250,
+        "inventory": STRESS_SCENARIO["inventory"],
+    },
+}
 MILP = "Exact optimizer (MILP)"
 
 
@@ -146,6 +192,32 @@ def render_comparison(edited, **params) -> None:
 
 
 st.set_page_config(page_title="StockBridge | Optimizer vs Greedy", page_icon="📦", layout="wide")
+with st.sidebar:
+    st.subheader("Planning scenario")
+    scenario_name = st.selectbox("Choose a scenario", list(SCENARIOS))
+    scenario = SCENARIOS[scenario_name]
+    budget = st.number_input(
+        "Budget (₹)", min_value=0, value=scenario["budget"], step=10_000,
+        key=f"budget_{scenario_name}",
+    )
+    st.divider()
+    st.subheader("Shared constraints")
+    out_cap = st.number_input(
+        "Outbound capacity (units)", min_value=1, value=scenario["out_cap"],
+        key=f"outbound_{scenario_name}",
+    )
+    in_cap = st.number_input(
+        "Inbound capacity (units)", min_value=1, value=scenario["in_cap"],
+        key=f"inbound_{scenario_name}",
+    )
+    storage_cap = st.number_input(
+        "Storage capacity (units)", min_value=1, value=scenario["storage_cap"],
+        key=f"storage_{scenario_name}",
+    )
+    truck_cap = st.number_input("Truck capacity (units)", min_value=1, value=100, key=f"truck_{scenario_name}")
+    min_fill = st.slider("Minimum truck fill", 0, 100, 70, 5, key=f"fill_{scenario_name}") / 100
+    moq = st.number_input("Minimum order quantity", min_value=1, value=10, key=f"moq_{scenario_name}")
+
 st.markdown("""
 <style>
 .stApp{background:#f4f0e2;background-image:radial-gradient(#17171717 .8px,transparent .8px);background-size:15px 15px}
@@ -187,25 +259,67 @@ h2,h3{font-family:'Arial Black',Impact,sans-serif!important;color:#111!important
 .comparison-table td,.inventory-table td{padding:12px 14px;border-bottom:1px solid #ddd;color:#161616;font-weight:650;white-space:nowrap}
 .comparison-table tbody tr:first-child{background:#eaf0ff}
 .comparison-table tbody tr:nth-child(even),.inventory-table tbody tr:nth-child(even){background:#fff0f7}
-@media(max-width:680px){.hero{padding:20px}.hero h1{font-size:2rem}.hero p{font-size:.92rem}.block-container{padding:1rem .8rem 3rem}.comparison-table th,.comparison-table td,.inventory-table th,.inventory-table td{padding:8px 6px;font-size:.78rem}}
+@media(max-width:680px){.hero{padding:20px}.hero h1{font-size:2rem}.hero p{font-size:.92rem}.block-container{padding:1rem .8rem 3rem}.comparison-table th,.comparison-table td,.inventory-table th,.inventory-table td{padding:8px 6px;font-size:.78rem}[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important;gap:.45rem!important}[data-testid="stHorizontalBlock"]>[data-testid="column"]{flex:1 1 calc(50% - .45rem)!important;width:calc(50% - .45rem)!important;min-width:calc(50% - .45rem)!important}}
 </style>
-<header class="hero"><span class="hero-kicker">CAPACITY-SQUEEZE STRESS TEST</span><h1>StockBridge</h1><p>Adjust the shared outbound limit to see how a local greedy choice can strand capacity while the exact optimizer plans across lanes.</p></header>
 """, unsafe_allow_html=True)
-st.markdown('<div class="section-label"><span>01</span> THE TEST INPUT</div>', unsafe_allow_html=True)
-st.subheader(STRESS_NAME)
-st.caption("Constructed demonstration only. The sample values are designed to expose a capacity interaction; they are not realistic or live warehouse data.")
-edited = [dict(row) for row in STRESS_SCENARIO["inventory"]]
-render_table(edited, "inventory-table")
+hero_copy = (
+    "A capacity-squeeze demonstration: compare an optimizer that plans across lanes with greedy rules."
+    if scenario_name == STRESS_NAME
+    else "Compare exact, priority-weighted transfer planning across your selected demand scenario."
+)
+st.markdown(
+    f'<header class="hero"><span class="hero-kicker">INVENTORY TRANSFER PLANNER</span>'
+    f'<h1>StockBridge</h1><p>{escape(hero_copy)}</p></header>',
+    unsafe_allow_html=True,
+)
+st.markdown('<div class="section-label"><span>01</span> INVENTORY POSITION</div>', unsafe_allow_html=True)
+st.subheader(scenario_name)
+st.caption("Edit inventory quantities, destination priorities, and unit costs. Scenario values are illustrative.")
+edited = [dict(row) for row in scenario["inventory"]]
 
-with st.sidebar:
-    st.subheader("Shared constraints")
-    budget = st.number_input("Budget (₹)", min_value=0, value=STRESS_SCENARIO["budget"], step=1_000)
-    out_cap = st.number_input("Outbound capacity (units)", min_value=1, value=145)
-    in_cap = st.number_input("Inbound capacity (units)", min_value=1, value=250)
-    storage_cap = st.number_input("Storage capacity (units)", min_value=1, value=250)
-    truck_cap = st.number_input("Truck capacity (units)", min_value=1, value=100)
-    min_fill = st.slider("Minimum truck fill", 0, 100, 70, 5) / 100
-    moq = st.number_input("Minimum order quantity", min_value=1, value=10)
+total_excess = sum(row["Excess"] for row in edited)
+total_shortage = sum(row["Shortage"] for row in edited)
+matched_products = set()
+for product in dict.fromkeys(row["Product"] for row in edited):
+    product_rows = [row for row in edited if row["Product"] == product]
+    if any(
+        source["Warehouse"] != destination["Warehouse"]
+        for source in product_rows if source["Excess"] > 0
+        for destination in product_rows if destination["Shortage"] > 0
+    ):
+        matched_products.add(product)
+position_metrics = st.columns(3)
+position_metrics[0].metric("Excess inventory", f"{total_excess:,} units")
+position_metrics[1].metric("Shortage demand", f"{total_shortage:,} units")
+position_metrics[2].metric("Products with a cross-center match", f"{len(matched_products)} / {len(set(row['Product'] for row in edited))}")
+
+inventory_columns = st.columns([1.25, 1.0, 0.9, 0.9, 0.9, 1.0])
+for column, heading in zip(inventory_columns, ["Product", "Warehouse", "Excess", "Shortage", "Priority", "Unit cost"]):
+    column.markdown(f"**{heading}**")
+for row_index, row in enumerate(edited):
+    columns = st.columns([1.25, 1.0, 0.9, 0.9, 0.9, 1.0])
+    columns[0].write(row["Product"])
+    columns[1].write(row["Warehouse"])
+    edited[row_index]["Excess"] = columns[2].number_input(
+        f"Excess for {row['Product']} at {row['Warehouse']}", min_value=0,
+        value=int(row["Excess"]), step=1,
+        key=f"{scenario_name}_{row_index}_excess", label_visibility="collapsed",
+    )
+    edited[row_index]["Shortage"] = columns[3].number_input(
+        f"Shortage for {row['Product']} at {row['Warehouse']}", min_value=0,
+        value=int(row["Shortage"]), step=1,
+        key=f"{scenario_name}_{row_index}_shortage", label_visibility="collapsed",
+    )
+    edited[row_index]["Priority"] = columns[4].number_input(
+        f"Priority for {row['Product']} at {row['Warehouse']}",
+        min_value=1, max_value=5, value=int(row["Priority"]), step=1,
+        key=f"{scenario_name}_{row_index}_priority", label_visibility="collapsed",
+    )
+    edited[row_index]["Unit cost"] = columns[5].number_input(
+        f"Unit cost for {row['Product']} at {row['Warehouse']}", min_value=0,
+        value=int(row["Unit cost"]), step=10,
+        key=f"{scenario_name}_{row_index}_unit_cost", label_visibility="collapsed",
+    )
 
 render_comparison(
     edited,
